@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import dotenv.load_dotenv
 import os
+
+# Load environment variables from .env file
 load_dotenv()
 # Set your OpenAI API key
 openai.api_key = os.getenv("OPENAI_KEY")
