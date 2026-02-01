@@ -1,31 +1,93 @@
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, OperationFailure
 from datetime import datetime
 from typing import Dict, List, Optional
 import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class UserFoodPreferenceManager:
     """
-    Manages user food preferences in MongoDB based on food waste analysis.
+    Manages user food preferences in MongoDB Atlas based on food waste analysis.
     Tracks what users like and dislike, and updates preferences without duplicates.
     """
     
-    def __init__(self, mongodb_uri: str = "mongodb://localhost:27017/", db_name: str = "food_preferences"):
+    def __init__(
+        self,
+        mongodb_uri: Optional[str] = None,
+        db_name: str = "food_preferences"
+    ):
         """
-        Initialize MongoDB connection.
+        Initialize MongoDB Atlas connection.
         
         Args:
-            mongodb_uri: MongoDB connection string
+            mongodb_uri: MongoDB Atlas connection string (if None, reads from env)
             db_name: Database name
         """
-        self.client = MongoClient(mongodb_uri)
-        self.db = self.client[db_name]
-        self.users_collection = self.db['users']
-        self.history_collection = self.db['meal_history']
+        # Get MongoDB URI from parameter or environment variable
+        self.mongodb_uri = mongodb_uri or os.getenv("MONGODB_URI")
         
-        # Create indexes for better performance
-        self.users_collection.create_index("user_id", unique=True)
-        self.history_collection.create_index("user_id")
-        self.history_collection.create_index("timestamp")
+        if not self.mongodb_uri:
+            raise ValueError("MongoDB URI must be provided either as parameter or MONGODB_URI environment variable")
+        
+        try:
+            # Connect to MongoDB Atlas
+            self.client = MongoClient(
+                self.mongodb_uri,
+                serverSelectionTimeoutMS=5000,  # 5 second timeout
+                connectTimeoutMS=10000,
+                socketTimeoutMS=10000
+            )
+            
+            # Test the connection
+            self.client.admin.command('ping')
+            print("Successfully connected to MongoDB Atlas!")
+            
+            self.db = self.client[db_name]
+            self.users_collection = self.db['users']
+            self.history_collection = self.db['meal_history']
+            
+            # Create indexes for better performance
+            self._create_indexes()
+            
+        except ConnectionFailure as e:
+            print(f"Failed to connect to MongoDB Atlas: {e}")
+            raise
+        except Exception as e:
+            print(f"Error initializing MongoDB connection: {e}")
+            raise
+    
+    def _create_indexes(self):
+        """Create database indexes for better performance."""
+        try:
+            # User collection indexes
+            self.users_collection.create_index("user_id", unique=True)
+            
+            # History collection indexes
+            self.history_collection.create_index("user_id")
+            self.history_collection.create_index("timestamp")
+            self.history_collection.create_index([("user_id", 1), ("timestamp", -1)])
+            
+            print("Database indexes created successfully!")
+        except OperationFailure as e:
+            print(f"Warning: Could not create indexes: {e}")
+    
+    def test_connection(self) -> bool:
+        """
+        Test MongoDB Atlas connection.
+        
+        Returns:
+            True if connection is successful, False otherwise
+        """
+        try:
+            self.client.admin.command('ping')
+            return True
+        except Exception as e:
+            print(f"Connection test failed: {e}")
+            return False
     
     def get_user(self, user_id: str) -> Optional[Dict]:
         """
@@ -37,7 +99,11 @@ class UserFoodPreferenceManager:
         Returns:
             User document or None if not found
         """
-        return self.users_collection.find_one({"user_id": user_id})
+        try:
+            return self.users_collection.find_one({"user_id": user_id})
+        except Exception as e:
+            print(f"Error getting user: {e}")
+            return None
     
     def create_user(self, user_id: str, user_name: str = None) -> Dict:
         """
@@ -61,8 +127,12 @@ class UserFoodPreferenceManager:
             "updated_at": datetime.utcnow()
         }
         
-        self.users_collection.insert_one(user_doc)
-        return user_doc
+        try:
+            self.users_collection.insert_one(user_doc)
+            return user_doc
+        except Exception as e:
+            print(f"Error creating user: {e}")
+            raise
     
     def update_user_preferences(self, user_id: str, waste_analysis: Dict) -> Dict:
         """
@@ -75,67 +145,72 @@ class UserFoodPreferenceManager:
         Returns:
             Updated user document
         """
-        # Get or create user
-        user = self.get_user(user_id)
-        if not user:
-            user = self.create_user(user_id)
-        
-        # Extract preferences from analysis
-        food_prefs = waste_analysis.get('food_preferences', {})
-        new_likes = food_prefs.get('likely_likes', [])
-        new_dislikes = food_prefs.get('likely_dislikes', [])
-        
-        # Get current preferences
-        current_likes = set(user.get('liked_foods', []))
-        current_dislikes = set(user.get('disliked_foods', []))
-        
-        # Normalize food names (lowercase, strip whitespace)
-        new_likes = [food.lower().strip() for food in new_likes]
-        new_dislikes = [food.lower().strip() for food in new_dislikes]
-        
-        # Add new likes (avoiding duplicates)
-        for food in new_likes:
-            if food and food not in current_likes:
-                # Remove from dislikes if it was there (preference changed)
-                current_dislikes.discard(food)
-                current_likes.add(food)
-        
-        # Add new dislikes (avoiding duplicates)
-        for food in new_dislikes:
-            if food and food not in current_dislikes:
-                # Remove from likes if it was there (preference changed)
-                current_likes.discard(food)
-                current_dislikes.add(food)
-        
-        # Parse waste percentage
-        waste_summary = waste_analysis.get('waste_summary', {})
-        waste_percentage_str = waste_summary.get('total_waste_percentage', '0%')
-        waste_percentage = float(waste_percentage_str.replace('%', ''))
-        
-        # Calculate running average of waste
-        meal_count = user.get('meal_count', 0)
-        current_avg_waste = user.get('total_waste_percentage', 0.0)
-        new_avg_waste = ((current_avg_waste * meal_count) + waste_percentage) / (meal_count + 1)
-        
-        # Update user document
-        update_result = self.users_collection.update_one(
-            {"user_id": user_id},
-            {
-                "$set": {
-                    "liked_foods": sorted(list(current_likes)),
-                    "disliked_foods": sorted(list(current_dislikes)),
-                    "meal_count": meal_count + 1,
-                    "total_waste_percentage": round(new_avg_waste, 2),
-                    "updated_at": datetime.utcnow()
+        try:
+            # Get or create user
+            user = self.get_user(user_id)
+            if not user:
+                user = self.create_user(user_id)
+            
+            # Extract preferences from analysis
+            food_prefs = waste_analysis.get('food_preferences', {})
+            new_likes = food_prefs.get('likely_likes', [])
+            new_dislikes = food_prefs.get('likely_dislikes', [])
+            
+            # Get current preferences
+            current_likes = set(user.get('liked_foods', []))
+            current_dislikes = set(user.get('disliked_foods', []))
+            
+            # Normalize food names (lowercase, strip whitespace)
+            new_likes = [food.lower().strip() for food in new_likes]
+            new_dislikes = [food.lower().strip() for food in new_dislikes]
+            
+            # Add new likes (avoiding duplicates)
+            for food in new_likes:
+                if food and food not in current_likes:
+                    # Remove from dislikes if it was there (preference changed)
+                    current_dislikes.discard(food)
+                    current_likes.add(food)
+            
+            # Add new dislikes (avoiding duplicates)
+            for food in new_dislikes:
+                if food and food not in current_dislikes:
+                    # Remove from likes if it was there (preference changed)
+                    current_likes.discard(food)
+                    current_dislikes.add(food)
+            
+            # Parse waste percentage
+            waste_summary = waste_analysis.get('waste_summary', {})
+            waste_percentage_str = waste_summary.get('total_waste_percentage', '0%')
+            waste_percentage = float(waste_percentage_str.replace('%', ''))
+            
+            # Calculate running average of waste
+            meal_count = user.get('meal_count', 0)
+            current_avg_waste = user.get('total_waste_percentage', 0.0)
+            new_avg_waste = ((current_avg_waste * meal_count) + waste_percentage) / (meal_count + 1)
+            
+            # Update user document
+            update_result = self.users_collection.update_one(
+                {"user_id": user_id},
+                {
+                    "$set": {
+                        "liked_foods": sorted(list(current_likes)),
+                        "disliked_foods": sorted(list(current_dislikes)),
+                        "meal_count": meal_count + 1,
+                        "total_waste_percentage": round(new_avg_waste, 2),
+                        "updated_at": datetime.utcnow()
+                    }
                 }
-            }
-        )
-        
-        # Save meal history
-        self._save_meal_history(user_id, waste_analysis)
-        
-        # Return updated user
-        return self.get_user(user_id)
+            )
+            
+            # Save meal history
+            self._save_meal_history(user_id, waste_analysis)
+            
+            # Return updated user
+            return self.get_user(user_id)
+            
+        except Exception as e:
+            print(f"Error updating user preferences: {e}")
+            raise
     
     def _save_meal_history(self, user_id: str, waste_analysis: Dict):
         """
@@ -155,7 +230,11 @@ class UserFoodPreferenceManager:
             "waste_summary": waste_analysis.get('waste_summary', {})
         }
         
-        self.history_collection.insert_one(history_doc)
+        try:
+            self.history_collection.insert_one(history_doc)
+        except Exception as e:
+            print(f"Error saving meal history: {e}")
+            raise
     
     def get_user_summary(self, user_id: str) -> Optional[Dict]:
         """
@@ -167,41 +246,45 @@ class UserFoodPreferenceManager:
         Returns:
             User summary with preferences and statistics
         """
-        user = self.get_user(user_id)
-        if not user:
+        try:
+            user = self.get_user(user_id)
+            if not user:
+                return None
+            
+            # Get meal history count
+            history_count = self.history_collection.count_documents({"user_id": user_id})
+            
+            # Get recent meals
+            recent_meals = list(
+                self.history_collection
+                .find({"user_id": user_id})
+                .sort("timestamp", -1)
+                .limit(5)
+            )
+            
+            # Format recent meals
+            formatted_meals = []
+            for meal in recent_meals:
+                formatted_meals.append({
+                    "meal_name": meal.get('original_meal', {}).get('name', 'Unknown'),
+                    "timestamp": meal.get('timestamp').isoformat() if meal.get('timestamp') else None,
+                    "waste_percentage": meal.get('waste_summary', {}).get('total_waste_percentage', 'N/A')
+                })
+            
+            return {
+                "user_id": user.get('user_id'),
+                "user_name": user.get('user_name'),
+                "liked_foods": user.get('liked_foods', []),
+                "disliked_foods": user.get('disliked_foods', []),
+                "total_meals_analyzed": user.get('meal_count', 0),
+                "average_waste_percentage": user.get('total_waste_percentage', 0.0),
+                "recent_meals": formatted_meals,
+                "created_at": user.get('created_at').isoformat() if user.get('created_at') else None,
+                "updated_at": user.get('updated_at').isoformat() if user.get('updated_at') else None
+            }
+        except Exception as e:
+            print(f"Error getting user summary: {e}")
             return None
-        
-        # Get meal history count
-        history_count = self.history_collection.count_documents({"user_id": user_id})
-        
-        # Get recent meals
-        recent_meals = list(
-            self.history_collection
-            .find({"user_id": user_id})
-            .sort("timestamp", -1)
-            .limit(5)
-        )
-        
-        # Format recent meals
-        formatted_meals = []
-        for meal in recent_meals:
-            formatted_meals.append({
-                "meal_name": meal.get('original_meal', {}).get('name', 'Unknown'),
-                "timestamp": meal.get('timestamp').isoformat() if meal.get('timestamp') else None,
-                "waste_percentage": meal.get('waste_summary', {}).get('total_waste_percentage', 'N/A')
-            })
-        
-        return {
-            "user_id": user.get('user_id'),
-            "user_name": user.get('user_name'),
-            "liked_foods": user.get('liked_foods', []),
-            "disliked_foods": user.get('disliked_foods', []),
-            "total_meals_analyzed": user.get('meal_count', 0),
-            "average_waste_percentage": user.get('total_waste_percentage', 0.0),
-            "recent_meals": formatted_meals,
-            "created_at": user.get('created_at').isoformat() if user.get('created_at') else None,
-            "updated_at": user.get('updated_at').isoformat() if user.get('updated_at') else None
-        }
     
     def get_meal_history(self, user_id: str, limit: int = 10) -> List[Dict]:
         """
@@ -214,19 +297,23 @@ class UserFoodPreferenceManager:
         Returns:
             List of meal history documents
         """
-        meals = list(
-            self.history_collection
-            .find({"user_id": user_id}, {"_id": 0})
-            .sort("timestamp", -1)
-            .limit(limit)
-        )
-        
-        # Convert datetime to string for JSON serialization
-        for meal in meals:
-            if 'timestamp' in meal and meal['timestamp']:
-                meal['timestamp'] = meal['timestamp'].isoformat()
-        
-        return meals
+        try:
+            meals = list(
+                self.history_collection
+                .find({"user_id": user_id}, {"_id": 0})
+                .sort("timestamp", -1)
+                .limit(limit)
+            )
+            
+            # Convert datetime to string for JSON serialization
+            for meal in meals:
+                if 'timestamp' in meal and meal['timestamp']:
+                    meal['timestamp'] = meal['timestamp'].isoformat()
+            
+            return meals
+        except Exception as e:
+            print(f"Error getting meal history: {e}")
+            return []
     
     def delete_user(self, user_id: str) -> bool:
         """
@@ -238,81 +325,96 @@ class UserFoodPreferenceManager:
         Returns:
             True if user was deleted, False otherwise
         """
-        # Delete user document
-        user_result = self.users_collection.delete_one({"user_id": user_id})
-        
-        # Delete all meal history
-        self.history_collection.delete_many({"user_id": user_id})
-        
-        return user_result.deleted_count > 0
+        try:
+            # Delete user document
+            user_result = self.users_collection.delete_one({"user_id": user_id})
+            
+            # Delete all meal history
+            self.history_collection.delete_many({"user_id": user_id})
+            
+            return user_result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting user: {e}")
+            return False
     
     def close(self):
         """Close MongoDB connection."""
-        self.client.close()
+        try:
+            self.client.close()
+            print("MongoDB connection closed successfully!")
+        except Exception as e:
+            print(f"Error closing connection: {e}")
 
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize the manager
-    manager = UserFoodPreferenceManager()
-    
-    # Example waste analysis JSON (from the food waste analyzer API)
-    waste_analysis = {
-        "original_meal": {
-            "name": "Loaded Fries",
-            "description": "Fries topped with cheese and possibly other ingredients like bacon and jalapenos."
-        },
-        "thrown_away": [
-            {
-                "item": "fries",
-                "quantity": "1/4 cup",
-                "percentage_of_original": "30%"
+    try:
+        # Initialize the manager (will read MONGODB_URI from .env)
+        manager = UserFoodPreferenceManager()
+        
+        # Test connection
+        if manager.test_connection():
+            print("✓ Connection test passed!\n")
+        
+        # Example waste analysis JSON (from the food waste analyzer API)
+        waste_analysis = {
+            "original_meal": {
+                "name": "Loaded Fries",
+                "description": "Fries topped with cheese and possibly other ingredients like bacon and jalapenos."
             },
-            {
-                "item": "toppings (cheese, jalapenos)",
-                "quantity": "1/8 cup",
-                "percentage_of_original": "40%"
-            }
-        ],
-        "eaten": [
-            {
-                "item": "fries",
-                "quantity": "2/3 cup",
-                "percentage_of_original": "70%"
+            "thrown_away": [
+                {
+                    "item": "fries",
+                    "quantity": "1/4 cup",
+                    "percentage_of_original": "30%"
+                },
+                {
+                    "item": "toppings (cheese, jalapenos)",
+                    "quantity": "1/8 cup",
+                    "percentage_of_original": "40%"
+                }
+            ],
+            "eaten": [
+                {
+                    "item": "fries",
+                    "quantity": "2/3 cup",
+                    "percentage_of_original": "70%"
+                },
+                {
+                    "item": "toppings",
+                    "quantity": "3/8 cup",
+                    "percentage_of_original": "60%"
+                }
+            ],
+            "food_preferences": {
+                "likely_dislikes": ["toppings"],
+                "likely_likes": ["fries"],
+                "insights": "The person seems to prefer plain fries over fries with toppings."
             },
-            {
-                "item": "toppings",
-                "quantity": "3/8 cup",
-                "percentage_of_original": "60%"
+            "waste_summary": {
+                "total_waste_percentage": "35%",
+                "waste_value": "medium"
             }
-        ],
-        "food_preferences": {
-            "likely_dislikes": ["toppings"],
-            "likely_likes": ["fries"],
-            "insights": "The person seems to prefer plain fries over fries with toppings."
-        },
-        "waste_summary": {
-            "total_waste_percentage": "35%",
-            "waste_value": "medium"
         }
-    }
-    
-    # Update user preferences
-    user_id = "user123"
-    updated_user = manager.update_user_preferences(user_id, waste_analysis)
-    
-    print("=== Updated User ===")
-    print(json.dumps(updated_user, indent=2, default=str))
-    
-    # Get user summary
-    summary = manager.get_user_summary(user_id)
-    print("\n=== User Summary ===")
-    print(json.dumps(summary, indent=2))
-    
-    # Get meal history
-    history = manager.get_meal_history(user_id, limit=5)
-    print("\n=== Meal History ===")
-    print(json.dumps(history, indent=2))
-    
-    # Close connection
-    manager.close()
+        
+        # Update user preferences
+        user_id = "user123"
+        updated_user = manager.update_user_preferences(user_id, waste_analysis)
+        print("=== Updated User ===")
+        print(json.dumps(updated_user, indent=2, default=str))
+        
+        # Get user summary
+        summary = manager.get_user_summary(user_id)
+        print("\n=== User Summary ===")
+        print(json.dumps(summary, indent=2))
+        
+        # Get meal history
+        history = manager.get_meal_history(user_id, limit=5)
+        print("\n=== Meal History ===")
+        print(json.dumps(history, indent=2))
+        
+    except Exception as e:
+        print(f"Error in main execution: {e}")
+    finally:
+        # Close connection
+        manager.close()

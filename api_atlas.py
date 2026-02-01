@@ -3,27 +3,15 @@ from user_preference_manager import UserFoodPreferenceManager
 import json
 import os
 import socket
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 
-# ========================================
-# MONGODB ATLAS CONFIGURATION
-# ========================================
-# Replace this with YOUR MongoDB Atlas connection string
-# Get it from: Atlas Dashboard -> Connect -> Drivers
-# Format: mongodb+srv://username:password@cluster.mongodb.net/
 
-# IMPORTANT: Replace this with YOUR actual MongoDB Atlas connection string
-# Get it from: Atlas Dashboard -> Connect -> Drivers -> Python
-# Format: mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
-# 
-# You can set it via environment variable:
-#   export MONGODB_URI="mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/..."
-# 
-# Or uncomment and modify the line below (not recommended for production):
-# MONGODB_URI = "mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority"
-
-MONGODB_URI = "mongodb+srv://foodapp:foodappp@cluster0.foodapp.mongodb.net/?retryWrites=true&w=majority"
+MONGODB_URI = os.getenv("MONGODB_URI")
 
 if not MONGODB_URI:
     print("⚠️  WARNING: MONGODB_URI not set. Please set it as an environment variable or in the code.")
