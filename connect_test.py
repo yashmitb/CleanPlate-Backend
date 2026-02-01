@@ -1,20 +1,13 @@
+import certifi
 from pymongo import MongoClient
 
-# Connection string format
-connection_string = "mongodb+srv://cleanplate:cleanplatepassword@cluster0.foodapp.mongodb.net/?retryWrites=true&w=majority"
+uri = "mongodb+srv://cleanplate:cleanplatepassword@cluster0.txg2gfi.mongodb.net/?appName=Cluster0"
 
-# Create client
-client = MongoClient(connection_string)
+# Tell PyMongo to use certifi's certificate bundle
+client = MongoClient(uri, tlsCAFile=certifi.where())
 
-# Access a database
-db = client['foodapp']
-
-# Access a collection
-collection = db['users']
-
-# Test the connection
 try:
     client.admin.command('ping')
-    print("Successfully connected to MongoDB!")
+    print("Successfully connected with SSL verification!")
 except Exception as e:
-    print(f"Error connecting: {e}")
+    print(f"Still failing: {e}")
