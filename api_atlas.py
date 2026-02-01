@@ -474,6 +474,4 @@ if __name__ == '__main__':
     if port != 5000:
         print(f"⚠️  Port 5000 is in use, using port {port} instead")
     
-    print(f"🌐 API running on http://localhost:{port}")
-    print("\n⚠️  Make sure to set your MONGODB_URI!")
     app.run(debug=True, host='0.0.0.0', port=port)
