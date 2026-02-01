@@ -1,4 +1,5 @@
 from pymongo import MongoClient
+import certifi
 from pymongo.errors import ConnectionFailure, OperationFailure
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -34,10 +35,11 @@ class UserFoodPreferenceManager:
             raise ValueError("MongoDB URI must be provided either as parameter or MONGODB_URI environment variable")
         
         try:
-            # Connect to MongoDB Atlas
+            # Connect to MongoDB Atlas with certifi for SSL verification
             self.client = MongoClient(
                 self.mongodb_uri,
-                serverSelectionTimeoutMS=5000,  # 5 second timeout
+                tlsCAFile=certifi.where(),
+                serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=10000,
                 socketTimeoutMS=10000
             )

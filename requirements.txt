@@ -1,0 +1,7 @@
+flask
+pymongo
+openai
+python-dotenv
+certifi
+dnspython
+requests

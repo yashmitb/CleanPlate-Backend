@@ -4,11 +4,52 @@ import json
 import os
 import socket
 from dotenv import load_dotenv
+import services
 
 # Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
+
+# --- Analysis Endpoints ---
+
+@app.route('/api/analyze/image', methods=['POST'])
+def analyze_image():
+    """
+    Analyze an uploaded image file for food waste.
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({"success": False, "error": "No file part"}), 400
+            
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"success": False, "error": "No selected file"}), 400
+
+        image_bytes = file.read()
+        analysis_result = services.analyze_food_waste_image(image_bytes)
+        return jsonify({"success": True, "analysis": analysis_result}), 200
+        
+    except Exception as e:
+        print(f"Analysis error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/analyze/url', methods=['POST'])
+def analyze_url():
+    """
+    Analyze an image from a URL for food waste.
+    """
+    try:
+        data = request.get_json()
+        if not data or 'image_url' not in data:
+            return jsonify({"success": False, "error": "image_url is required"}), 400
+            
+        image_url = data['image_url']
+        analysis_result = services.analyze_food_waste_url(image_url)
+        return jsonify({"success": True, "analysis": analysis_result}), 200
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 MONGODB_URI = os.getenv("MONGODB_URI")
