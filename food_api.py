@@ -2,7 +2,7 @@ import openai
 import base64
 import json
 from pathlib import Path
-import dotenv.load_dotenv
+from dotenv import load_dotenv
 import os
 
 # Load environment variables from .env file
