@@ -37,6 +37,7 @@ def documentation():
             .url { font-family: monospace; font-weight: bold; font-size: 1.1em; color: #333; margin-left: 10px; }
             pre { background: #2d3436; color: #f1f1f1; padding: 15px; border-radius: 5px; overflow-x: auto; }
             .desc { margin: 10px 0; font-size: 0.95em; }
+            .response-format { margin-top: 10px; font-size: 0.9em; color: #555; }
         </style>
     </head>
     <body>
@@ -48,12 +49,28 @@ def documentation():
         <div class="endpoint">
             <span class="method post">POST</span> <span class="url">/api/analyze/image</span>
             <div class="desc">Analyze uploaded food image for waste data. expects <code>multipart/form-data</code> with <code>file</code> field.</div>
+            <div class="response-format">
+                <strong>Returns:</strong>
+                <pre>{
+  "success": true,
+  "analysis": {
+    "original_meal": { "name": "...", "description": "..." },
+    "thrown_away": [ { "item": "...", "quantity": "...", "percentage_of_original": "..." } ],
+    "eaten": [ { "item": "...", "quantity": "...", "percentage_of_original": "..." } ],
+    "food_preferences": { "likely_likes": [], "likely_dislikes": [], "insights": "..." },
+    "waste_summary": { "total_waste_percentage": "...", "waste_value": "..." }
+  }
+}</pre>
+            </div>
         </div>
 
         <div class="endpoint">
             <span class="method post">POST</span> <span class="url">/api/analyze/url</span>
             <div class="desc">Analyze food image from a URL. Expects JSON body.</div>
             <pre>{ "image_url": "https://example.com/food.jpg" }</pre>
+             <div class="response-format">
+                <strong>Returns:</strong> Same structure as <code>/api/analyze/image</code>.
+            </div>
         </div>
 
         <h2>User Management</h2>
